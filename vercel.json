@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm install",
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "public": false,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 25,
+      "memory": 1024,
+      "includeFiles": "src/**,server.js,package.json,package-lock.json"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index.js" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "SKIP_DOTENV": "1"
+  },
+  "regions": ["iad1"]
+}
