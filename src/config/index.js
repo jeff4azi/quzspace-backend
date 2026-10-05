@@ -19,7 +19,7 @@ const envSchema = z.object({
 
   CORS_ORIGINS: z
     .string()
-    .default("http://localhost:5173,http://localhost:3000")
+    .default("http://localhost:5173,http://localhost:3000,https://quzspace.vercel.app")
     .transform((s) =>
       s
         .split(",")
