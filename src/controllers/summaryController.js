@@ -1,9 +1,9 @@
-// controllers/summaryController.js
+const asyncHandler = require("../lib/asyncHandler");
 const { summaryService } = require("../services/summaryService");
 
 const service = summaryService();
 
-async function getSpaceTopics(req, res) {
+const getSpaceTopics = asyncHandler(async (req, res) => {
   const spaceId = req.params.id;
   const simulatePending = req.query.simulate_pending === "1";
 
@@ -25,7 +25,7 @@ async function getSpaceTopics(req, res) {
       topics: result.topics,
     },
   });
-}
+});
 
 module.exports = {
   getSpaceTopics,

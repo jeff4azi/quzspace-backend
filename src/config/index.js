@@ -1,4 +1,6 @@
-require("dotenv").config();
+if (process.env.SKIP_DOTENV !== "1") {
+  require("dotenv").config();
+}
 const { z } = require("zod");
 const { AI } = require("./constants");
 

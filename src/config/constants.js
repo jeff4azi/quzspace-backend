@@ -111,6 +111,6 @@ exports.PROGRESS = {
 exports.AUTH = {
   SKIP_PATHS: [
     { method: "GET", path: "/health" },
-    { methodPrefix: "GET", pathPrefix: "/api/s/" },
+    { pathPrefix: "/api/v1/s/" },
   ],
 };

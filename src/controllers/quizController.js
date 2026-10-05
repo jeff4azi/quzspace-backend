@@ -1,15 +1,15 @@
-// controllers/quizController.js
+const asyncHandler = require("../lib/asyncHandler");
 const { quizService } = require("../services/quizService");
 
 const service = quizService();
 
-async function listQuizzes(req, res) {
+const listQuizzes = asyncHandler(async (req, res) => {
   const spaceId = req.params.id;
   const rows = service.listForSpace(spaceId);
   res.json({ data: rows });
-}
+});
 
-async function generateQuiz(req, res) {
+const generateQuiz = asyncHandler(async (req, res) => {
   const spaceId = req.params.id;
   const { questionCount, difficulty, selectedTopics } = req.body || {};
   const idempotencyKey = req.headers["idempotency-key"];
@@ -27,14 +27,14 @@ async function generateQuiz(req, res) {
     },
     ...(idempotencyKey ? { idempotencyKey } : {}),
   });
-}
+});
 
-async function deleteQuiz(req, res) {
+const deleteQuiz = asyncHandler(async (req, res) => {
   const spaceId = req.params.id;
   const quizId = req.params.quizId;
   const deleted = service.delete(spaceId, quizId);
   res.json({ data: { deleted, id: quizId } });
-}
+});
 
 module.exports = {
   listQuizzes,
