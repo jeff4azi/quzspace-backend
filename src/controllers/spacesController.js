@@ -1,64 +1,79 @@
-const asyncHandler = require("../lib/asyncHandler");
-const { z } = require("zod");
-
-const stubStore = [];
+const asyncHandler = require('../lib/asyncHandler');
+const { z } = require('zod');
+const spacesService = require('../services/spacesService');
 
 const createSpaceBodySchema = z.object({
-  title: z.string().min(1, "title is required").max(200),
-  subject: z.string().max(100).optional().default("General"),
+  title: z.string().min(1, 'title is required').max(200),
+  subject: z.string().max(100).optional().default('General'),
   pastedText: z.string().max(500000).optional(),
-  accentStyle: z.enum(["earth", "ocean", "sunset", "forest", "lavender"]).optional(),
+  accentStyle: z.enum(['earth', 'ocean', 'sunset', 'forest', 'lavender']).optional(),
 });
 
-const listSpaces = asyncHandler(async (_req, res) => {
-  res.json({ data: stubStore.slice() });
+const patchSpaceBodySchema = z
+  .object({
+    title: z.string().max(200).optional(),
+    subject: z.string().max(100).optional(),
+    accent_style: z.enum(['earth', 'ocean', 'sunset', 'forest', 'lavender']).optional(),
+    description: z.string().max(2000).optional(),
+    files_visible: z.boolean().optional(),
+  })
+  .strict();
+
+const listSpaces = asyncHandler(async (req, res) => {
+  res.json({ data: await spacesService.listForUser(req.user.id) });
 });
 
 const createSpace = asyncHandler(async (req, res) => {
-  const body = createSpaceBodySchema.parse(req.body);
-  const now = new Date().toISOString();
-  const row = {
-    id: `sp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    title: body.title,
-    subject: body.subject,
-    accent_style: body.accentStyle || "earth",
-    owner_id: req.user?.id || null,
-    file_count: body.pastedText ? 1 : 0,
-    progress_percent: 0,
-    last_accessed: now,
-    active_members: req.user?.id
-      ? [{ id: req.user.id, name: req.user.email || "You", role: "owner" }]
-      : [],
-    created_at: now,
-    updated_at: now,
-  };
-  stubStore.unshift(row);
-  res.status(201).json({ data: row });
+  const data = await spacesService.create({
+    userId: req.user.id,
+    title: req.body.title,
+    subject: req.body.subject,
+    accentStyle: req.body.accentStyle,
+    pastedText: req.body.pastedText,
+  });
+  res.status(201).json({ data });
 });
 
 const getSpace = asyncHandler(async (req, res) => {
-  const id = req.params.id;
-  const row = stubStore.find((s) => s.id === id);
-  if (!row) {
-    const { AppError } = require("../lib/errors");
-    const { HTTP_STATUS, ERROR_CODES } = require("../config/constants");
-    throw new AppError({
-      code: ERROR_CODES.NOT_FOUND,
-      message: `Space ${id} not found`,
-      status: HTTP_STATUS.NOT_FOUND,
-    });
-  }
-  res.json({
-    data: {
-      ...row,
-      role: req.user && row.owner_id === req.user.id ? "owner" : "collaborator",
-    },
+  const data = await spacesService.getById({
+    spaceId: req.params.id,
+    userId: req.user.id,
   });
+  res.json({ data });
+});
+
+const patchSpace = asyncHandler(async (req, res) => {
+  const data = await spacesService.update({
+    spaceId: req.params.id,
+    userId: req.user.id,
+    patch: req.body,
+  });
+  res.json({ data });
+});
+
+const deleteSpace = asyncHandler(async (req, res) => {
+  await spacesService.remove({
+    spaceId: req.params.id,
+    userId: req.user.id,
+  });
+  res.status(204).end();
+});
+
+const visitSpace = asyncHandler(async (req, res) => {
+  const lastAccessed = await spacesService.recordVisit({
+    spaceId: req.params.id,
+    userId: req.user.id,
+  });
+  res.status(201).json({ data: { last_accessed: lastAccessed } });
 });
 
 module.exports = {
   listSpaces,
   createSpace,
   getSpace,
+  patchSpace,
+  deleteSpace,
+  visitSpace,
   createSpaceBodySchema,
+  patchSpaceBodySchema,
 };

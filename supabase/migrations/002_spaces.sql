@@ -170,7 +170,7 @@ for each row execute function public.seed_space_flags();
 -- unified view: user_space_roles(space_id, user_id, role)
 --   role ∈ {owner, collaborator, viewer}
 -- ------------------------------------------------------------
-create or replace view public.user_space_roles as
+create or replace view public.user_space_roles with (security_invoker = on) as
   select s.id as space_id, s.owner_id as user_id, 'owner'::text as role
   from public.study_spaces s
   union all
