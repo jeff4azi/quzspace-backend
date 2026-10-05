@@ -20,16 +20,26 @@ const envSchema = z.object({
   CORS_ORIGINS: z
     .string()
     .default("http://localhost:5173,http://localhost:3000")
-    .transform((s) => s.split(",").map((o) => o.trim()).filter(Boolean)),
+    .transform((s) =>
+      s
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean),
+    ),
 
   AI_PROVIDER: z
-    .enum([AI.PROVIDERS.STUB, AI.PROVIDERS.OPENAI, AI.PROVIDERS.ANTHROPIC, AI.PROVIDERS.GEMINI])
+    .enum([
+      AI.PROVIDERS.STUB,
+      AI.PROVIDERS.OPENAI,
+      AI.PROVIDERS.ANTHROPIC,
+      AI.PROVIDERS.GEMINI,
+    ])
     .default(AI.DEFAULT_PROVIDER),
   AI_API_KEY: z.string().optional(),
   AI_MODEL: z.string().optional(),
   AI_BASE_URL: z.string().url().optional(),
 
-  VITE_SUPABASE_ANON_KEY: z.string().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
   VITE_SUPABASE_URL: z.string().url().optional(),
 
   BODY_JSON_LIMIT_MB: z.coerce.number().positive().default(2),
