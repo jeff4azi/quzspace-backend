@@ -112,5 +112,7 @@ exports.AUTH = {
   SKIP_PATHS: [
     { method: "GET", path: "/health" },
     { pathPrefix: "/api/v1/s/" },
+    { pathPrefix: "/api/v1/auth/signup" },
+    { pathPrefix: "/api/v1/auth/login" },
   ],
 };

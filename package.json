@@ -17,7 +17,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "pg-query-emscripten": "^5.1.0"
   },
   "keywords": [],
   "author": "",
