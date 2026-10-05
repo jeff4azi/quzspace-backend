@@ -2,12 +2,14 @@ const asyncHandler = require('../lib/asyncHandler');
 const { z } = require('zod');
 const spacesService = require('../services/spacesService');
 
-const createSpaceBodySchema = z.object({
-  title: z.string().min(1, 'title is required').max(200),
-  subject: z.string().max(100).optional().default('General'),
-  pastedText: z.string().max(500000).optional(),
-  accentStyle: z.enum(['earth', 'ocean', 'sunset', 'forest', 'lavender']).optional(),
-});
+const createSpaceBodySchema = z
+  .object({
+    title: z.string().min(1, 'title is required').max(200),
+    subject: z.string().max(100).optional().default('General'),
+    pastedText: z.string().max(500000).optional(),
+    accentStyle: z.enum(['earth', 'ocean', 'sunset', 'forest', 'lavender']).optional(),
+  })
+  .strict();
 
 const patchSpaceBodySchema = z
   .object({

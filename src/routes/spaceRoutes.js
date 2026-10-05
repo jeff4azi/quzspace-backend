@@ -3,6 +3,8 @@
 // :id is already parsed by Express into req.params.id.
 
 const express = require('express');
+const { z } = require('zod');
+const { validateParams } = require('../lib/validate');
 const { visitSpace } = require('../controllers/spacesController');
 const { getSpaceTopics } = require('../controllers/summaryController');
 const {
@@ -12,8 +14,9 @@ const {
 } = require('../controllers/quizController');
 
 const router = express.Router({ mergeParams: true });
+const idSchema = z.object({ id: z.string().min(1) });
 
-router.post('/visit', visitSpace);
+router.post('/visit', validateParams(idSchema), visitSpace);
 
 // --- Topics / Summary -------------------------------------------------------
 router.get('/topics', getSpaceTopics);
