@@ -7,11 +7,11 @@ const routes = require("./src/routes");
 const authMiddleware = require("./src/middleware/auth");
 const idempotencyMiddleware = require("./src/middleware/idempotency");
 const { errorHandler, AppError } = require("./src/lib/errors");
-const { HTTP_STATUS, ERROR_CODES, CORS } = require("./src/config/constants");
+const { HTTP_STATUS, ERROR_CODES, CORS, SERVER } = require("./src/config/constants");
 
 const app = express();
 const PORT = config.PORT;
-const API_PREFIX = config.API_PREFIX;
+const API_PREFIX = SERVER.API_PREFIX;
 
 // ---------- Core middleware ---------------------------------------------------
 app.use(
@@ -42,7 +42,7 @@ app.use(
 
 app.use(
   express.json({
-    limit: `${config.BODY_JSON_LIMIT_MB}mb`,
+    limit: `${SERVER.BODY_JSON_LIMIT_MB}mb`,
   }),
 );
 

@@ -132,7 +132,7 @@ async function hydrateAggregates({ baseRows, userId }) {
       .select(`
         id,
         flashcards!left(id, space_id, mastery:flashcard_mastery!left(user_id)),
-        quizzes!left(id, space_id, attempts:quiz_attempts!left(user_id, score))
+        quizzes!left(id, space_id, attempts:quiz_attempts!left(user_id, score_percent, submitted_at))
       `)
       .in('id', safeIds);
     batchProgress = Array.isArray(res.data) ? res.data : [];
@@ -179,7 +179,10 @@ async function hydrateAggregates({ baseRows, userId }) {
     if (Array.isArray(row.quizzes)) {
       for (const q of row.quizzes) {
         if (!q || !Array.isArray(q.attempts)) continue;
-        for (const a of q.attempts) attemptsRows.push({ score: a.score, quiz: { space_id: sid } });
+        for (const a of q.attempts) {
+          if (!a || !a.submitted_at) continue;
+          attemptsRows.push({ score: a.score_percent, quiz: { space_id: sid } });
+        }
       }
     }
   }

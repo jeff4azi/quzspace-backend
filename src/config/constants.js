@@ -25,6 +25,12 @@ exports.ERROR_CODES = {
   INTERNAL: "INTERNAL",
 };
 
+// Server wiring: static config lives in code, not env.
+exports.SERVER = {
+  API_PREFIX: "/api/v1",
+  BODY_JSON_LIMIT_MB: 2,
+};
+
 exports.AI = {
   MAX_CONTEXT_CHARS: 60000,
   MAX_FILE_CONTEXT_CHARS: 10000,
@@ -130,8 +136,8 @@ exports.PROGRESS = {
 exports.AUTH = {
   SKIP_PATHS: [
     { method: "GET", path: "/health" },
-    { pathPrefix: "/api/v1/s/" },
-    { pathPrefix: "/api/v1/auth/signup" },
-    { pathPrefix: "/api/v1/auth/login" },
+    { pathPrefix: `${exports.SERVER.API_PREFIX}/s/` },
+    { pathPrefix: `${exports.SERVER.API_PREFIX}/auth/signup` },
+    { pathPrefix: `${exports.SERVER.API_PREFIX}/auth/login` },
   ],
 };

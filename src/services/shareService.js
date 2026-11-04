@@ -84,7 +84,7 @@ async function createShareLink({ spaceId, userId, filesVisible = true }) {
 async function resolveCode(code) {
   const { data: shareRow } = await supabase
     .from('share_codes')
-    .select('space_id, files_visible')
+    .select('space_id, files_visible, created_at')
     .eq('code', code)
     .maybeSingle();
 
@@ -116,11 +116,36 @@ async function resolveCode(code) {
     .eq('status', 'ready')
     .maybeSingle();
 
+  // Community panels (leaderboard + active viewers) for the public page.
+  let community = { leaderboard: [] };
+  try {
+    community = await buildCommunity(shareRow.space_id, null);
+  } catch (e) {
+    console.error('[shareService.resolveCode] community build failed:', e.message);
+  }
+
   return {
     space,
     filesVisible: shareRow.files_visible,
     files: shareRow.files_visible ? (files || []) : [],
     summary: summary?.data || null,
+    share: {
+      share_code: code,
+      files_visible: shareRow.files_visible,
+      created_at: shareRow.created_at || null,
+    },
+    // Component-ready entries for <Leaderboard /> on SharedSpace.
+    leaderboard: (community.leaderboard || []).map((e) => ({
+      id: e.user_id,
+      name: e.name,
+      avatarInitials: e.avatar_initials,
+      avatarColor: e.avatar_color,
+      role: e.role,
+      bestScore: e.best_score,
+      quizzesTaken: e.quizzes_taken,
+      flashcardsReviewed: e.flashcards_reviewed,
+    })),
+    active_viewers: await fetchActiveViewers(shareRow.space_id),
   };
 }
 

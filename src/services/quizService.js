@@ -61,6 +61,16 @@ async function generate({ spaceId, userId, questionCount = 10, difficulty = 'Mix
 
   const { provider, model } = aiService.getProviderInfo();
 
+  // Build question rows first (quiz_questions uses question_index + question).
+  const questionsToInsert = rawQuestions.slice(0, count).map((q, idx) => ({
+    question_index: idx,
+    question: q.stem || `Question ${idx + 1}`,
+    options: Array.isArray(q.options) ? q.options : ['A', 'B', 'C', 'D'],
+    correct_answer_index: typeof q.correctAnswerIndex === 'number' ? q.correctAnswerIndex : 0,
+    explanation: q.explanation || '',
+    topic: q.topic || (topics[0] || null),
+  }));
+
   // Insert quiz row
   const { data: quiz, error: quizErr } = await supabase
     .from('quizzes')
@@ -68,7 +78,7 @@ async function generate({ spaceId, userId, questionCount = 10, difficulty = 'Mix
       space_id: spaceId,
       created_by: userId,
       title,
-      question_count: rawQuestions.length,
+      question_count: questionsToInsert.length,
       difficulty,
       selected_topics: topics,
       provider,
@@ -86,20 +96,23 @@ async function generate({ spaceId, userId, questionCount = 10, difficulty = 'Mix
   }
 
   // Insert quiz_questions
-  const questionsToInsert = rawQuestions.slice(0, count).map((q, idx) => ({
-    quiz_id: quiz.id,
-    space_id: spaceId,
-    position: idx,
-    stem: q.stem || `Question ${idx + 1}`,
-    options: Array.isArray(q.options) ? q.options : ['A', 'B', 'C', 'D'],
-    correct_answer_index: typeof q.correctAnswerIndex === 'number' ? q.correctAnswerIndex : 0,
-    explanation: q.explanation || '',
-    topic: q.topic || (topics[0] || null),
-    difficulty,
-  }));
+  const { error: qErr } = await supabase
+    .from('quiz_questions')
+    .insert(questionsToInsert.map((q) => ({ ...q, quiz_id: quiz.id })));
 
-  const { error: qErr } = await supabase.from('quiz_questions').insert(questionsToInsert);
-  if (qErr) console.error('[quizService.generate] questions insert error:', qErr.message);
+  if (qErr) {
+    // Roll back the orphan quiz row so it never appears empty in the list.
+    try {
+      await supabase.from('quizzes').delete().eq('id', quiz.id);
+    } catch (rollbackErr) {
+      console.error('[quizService.generate] rollback failed for orphan quiz:', quiz.id, rollbackErr?.message || rollbackErr);
+    }
+    throw new AppError({
+      code: ERROR_CODES.INTERNAL,
+      message: qErr.message || 'Failed to insert quiz questions',
+      status: HTTP_STATUS.INTERNAL,
+    });
+  }
 
   return normalizeQuiz(quiz);
 }
@@ -113,7 +126,7 @@ async function listForSpace(spaceId) {
     .from('quizzes')
     .select(`
       *,
-      attempts:quiz_attempts(id, score, completed_at)
+      attempts:quiz_attempts(id, score_percent, submitted_at)
     `)
     .eq('space_id', spaceId)
     .order('created_at', { ascending: false });
@@ -123,9 +136,9 @@ async function listForSpace(spaceId) {
   }
 
   return (data || []).map(quiz => {
-    const attempts = Array.isArray(quiz.attempts) ? quiz.attempts.filter(a => a.completed_at) : [];
+    const attempts = Array.isArray(quiz.attempts) ? quiz.attempts.filter(a => a.submitted_at) : [];
     const bestScore = attempts.length > 0
-      ? Math.max(...attempts.map(a => Number(a.score) || 0))
+      ? Math.max(...attempts.map(a => Number(a.score_percent) || 0))
       : null;
     return {
       ...normalizeQuiz(quiz),
@@ -155,7 +168,7 @@ async function getById({ spaceId, quizId, userId }) {
     .from('quiz_questions')
     .select('*')
     .eq('quiz_id', quizId)
-    .order('position', { ascending: true });
+    .order('question_index', { ascending: true });
 
   if (qErr) throw new AppError({ code: ERROR_CODES.INTERNAL, message: qErr.message, status: HTTP_STATUS.INTERNAL });
 
@@ -184,12 +197,21 @@ async function take({ spaceId, quizId, userId }) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
   }
 
+  // Attempt numbering is unique per (quiz, user).
+  const { count: priorAttempts } = await supabase
+    .from('quiz_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('quiz_id', quizId)
+    .eq('user_id', userId);
+
   const { data: attempt, error } = await supabase
     .from('quiz_attempts')
     .insert({
       quiz_id: quizId,
       space_id: spaceId,
       user_id: userId,
+      attempt_number: (priorAttempts || 0) + 1,
+      total_questions: quiz.question_count || 0,
       started_at: new Date().toISOString(),
     })
     .select('*')
@@ -200,18 +222,27 @@ async function take({ spaceId, quizId, userId }) {
   }
 
   // Return questions WITHOUT correctAnswerIndex
-  const { data: questions } = await supabase
+  const { data: questions, error: qErr } = await supabase
     .from('quiz_questions')
-    .select('id, position, stem, options, topic, difficulty')
+    .select('id, question_index, question, options, topic')
     .eq('quiz_id', quizId)
-    .order('position', { ascending: true });
+    .order('question_index', { ascending: true });
+
+  if (qErr) throw new AppError({ code: ERROR_CODES.INTERNAL, message: qErr.message, status: HTTP_STATUS.INTERNAL });
 
   return {
     attemptId: attempt.id,
+    attemptNumber: attempt.attempt_number,
     quizId,
     spaceId,
     startedAt: attempt.started_at,
-    questions: questions || [],
+    questions: (questions || []).map((q) => ({
+      id: q.id,
+      stem: q.question,
+      options: q.options,
+      topic: q.topic,
+      position: q.question_index,
+    })),
   };
 }
 
@@ -231,7 +262,7 @@ async function submit({ attemptId, userId, answers }) {
   if (aErr || !attempt) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Attempt not found', status: HTTP_STATUS.NOT_FOUND });
   }
-  if (attempt.completed_at) {
+  if (attempt.submitted_at) {
     throw new AppError({ code: ERROR_CODES.CONFLICT, message: 'Attempt already submitted', status: HTTP_STATUS.CONFLICT });
   }
 
@@ -239,11 +270,13 @@ async function submit({ attemptId, userId, answers }) {
   const spaceId = attempt.quiz?.space_id || attempt.space_id;
 
   // Fetch questions
-  const { data: questions } = await supabase
+  const { data: questions, error: qErr } = await supabase
     .from('quiz_questions')
     .select('*')
     .eq('quiz_id', quizId)
-    .order('position', { ascending: true });
+    .order('question_index', { ascending: true });
+
+  if (qErr) throw new AppError({ code: ERROR_CODES.INTERNAL, message: qErr.message, status: HTTP_STATUS.INTERNAL });
 
   const qMap = new Map((questions || []).map(q => [q.id, q]));
 
@@ -253,37 +286,48 @@ async function submit({ attemptId, userId, answers }) {
   const gradedAnswers = answersArr.map(a => {
     const q = qMap.get(a.questionId);
     if (!q) return null;
-    const isCorrect = Number(a.optionIndex) === Number(q.correct_answer_index);
+    const selected = typeof a.optionIndex === 'number' ? a.optionIndex : null;
+    const isCorrect = selected !== null && selected === Number(q.correct_answer_index);
     if (isCorrect) correct++;
     return {
-      quiz_attempt_id: attemptId,
+      attempt_id: attemptId,
       question_id: a.questionId,
-      selected_option_index: Number(a.optionIndex),
+      selected_index: selected,
       is_correct: isCorrect,
     };
   }).filter(Boolean);
 
-  const totalAnswered = answersArr.length || 1;
-  const scorePercent = Math.round((correct / Math.max(1, questions?.length || totalAnswered)) * 100);
+  const totalQuestions = (questions || []).length;
+  const scorePercent = totalQuestions > 0 ? Math.round((correct / totalQuestions) * 100) : 0;
   const now = new Date().toISOString();
-  const startedAt = attempt.started_at ? new Date(attempt.started_at) : new Date(Date.now() - 60000);
-  const timeTakenSec = Math.round((Date.now() - startedAt.getTime()) / 1000);
+  const startedAt = attempt.started_at ? new Date(attempt.started_at) : new Date();
+  const timeTakenSec = Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1000));
 
   // Write quiz_answers
   if (gradedAnswers.length > 0) {
-    await supabase.from('quiz_answers').insert(gradedAnswers);
+    const { error: ansErr } = await supabase
+      .from('quiz_answers')
+      .upsert(gradedAnswers, { onConflict: 'attempt_id,question_id' });
+    if (ansErr) throw new AppError({ code: ERROR_CODES.INTERNAL, message: ansErr.message, status: HTTP_STATUS.INTERNAL });
   }
 
   // Update attempt
-  await supabase
+  const { error: updErr } = await supabase
     .from('quiz_attempts')
-    .update({ completed_at: now, score: scorePercent, time_taken_sec: timeTakenSec })
+    .update({
+      submitted_at: now,
+      score_percent: scorePercent,
+      correct_count: correct,
+      total_questions: totalQuestions,
+      time_taken_sec: timeTakenSec,
+    })
     .eq('id', attemptId);
+  if (updErr) throw new AppError({ code: ERROR_CODES.INTERNAL, message: updErr.message, status: HTTP_STATUS.INTERNAL });
 
   // Log activity
   try {
     const progressService = require('./progressService');
-    const estimateMin = ((questions || []).length * 45) / 60;
+    const estimateMin = (totalQuestions * 45) / 60;
     await progressService.logActivity(spaceId, userId, 'quiz_submitted', estimateMin);
   } catch (_e) {}
 
@@ -292,18 +336,18 @@ async function submit({ attemptId, userId, answers }) {
     attemptId,
     scorePercent,
     correct,
-    total: questions?.length || 0,
+    total: totalQuestions,
     timeTakenSec,
     questions: (questions || []).map(q => {
-      const answer = answersArr.find(a => a.questionId === q.id);
-      const selected = answer ? Number(answer.optionIndex) : null;
+      const answer = gradedAnswers.find(g => g.question_id === q.id);
+      const selected = answer ? answer.selected_index : null;
       return {
         id: q.id,
-        stem: q.stem,
+        stem: q.question,
         options: q.options,
         correctAnswerIndex: q.correct_answer_index,
         selectedIndex: selected,
-        isCorrect: selected !== null ? selected === q.correct_answer_index : null,
+        isCorrect: selected !== null ? selected === Number(q.correct_answer_index) : null,
         explanation: q.explanation,
         topic: q.topic,
       };
@@ -319,19 +363,26 @@ async function listHistory({ spaceId, quizId, userId }) {
   let query = supabase
     .from('quiz_attempts')
     .select(`
-      id, started_at, completed_at, score, time_taken_sec, quiz_id,
+      id, attempt_number, score_percent, correct_count, total_questions,
+      time_taken_sec, started_at, submitted_at, quiz_id,
       quiz:quizzes(id, title, difficulty, question_count, selected_topics)
     `)
     .eq('user_id', userId)
-    .not('completed_at', 'is', null)
-    .order('completed_at', { ascending: false });
+    .not('submitted_at', 'is', null)
+    .order('submitted_at', { ascending: false });
 
   if (spaceId) query = query.eq('space_id', spaceId);
   if (quizId) query = query.eq('quiz_id', quizId);
 
   const { data, error } = await query;
   if (error) throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
-  return data || [];
+
+  // `score` / `completed_at` aliases keep the frontend contract stable.
+  return (data || []).map(row => ({
+    ...row,
+    score: row.correct_count,
+    completed_at: row.submitted_at,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -342,12 +393,12 @@ async function leaderboard({ spaceId, quizId, limit = 10 }) {
   const { data, error } = await supabase
     .from('quiz_attempts')
     .select(`
-      id, score, time_taken_sec, completed_at,
+      id, score_percent, time_taken_sec, submitted_at,
       user:profiles(id, display_name, name, avatar_url)
     `)
     .eq('quiz_id', quizId)
-    .not('completed_at', 'is', null)
-    .order('score', { ascending: false })
+    .not('submitted_at', 'is', null)
+    .order('score_percent', { ascending: false })
     .order('time_taken_sec', { ascending: true })
     .limit(limit);
 
@@ -355,9 +406,9 @@ async function leaderboard({ spaceId, quizId, limit = 10 }) {
 
   return (data || []).map((row, idx) => ({
     rank: idx + 1,
-    score: row.score,
+    score: row.score_percent,
     timeTakenSec: row.time_taken_sec,
-    completedAt: row.completed_at,
+    completedAt: row.submitted_at,
     user: row.user || { id: null, name: 'Anonymous' },
   }));
 }
@@ -405,11 +456,10 @@ function normalizeQuiz(quiz) {
 function formatQuestion(q, includeAnswer) {
   const base = {
     id: q.id,
-    position: q.position,
-    stem: q.stem,
+    position: q.question_index,
+    stem: q.question,
     options: q.options,
     topic: q.topic,
-    difficulty: q.difficulty,
     explanation: q.explanation,
   };
   if (includeAnswer) base.correctAnswerIndex = q.correct_answer_index;

@@ -8,7 +8,6 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   PORT: z.coerce.number().int().positive().default(5000),
-  API_PREFIX: z.string().default("/api/v1"),
 
   SUPABASE_URL: z.string().url().min(1, "SUPABASE_URL is required"),
   SUPABASE_SERVICE_ROLE_KEY: z
@@ -23,8 +22,6 @@ const envSchema = z.object({
     .optional()
     .transform((v) => (v && v.trim() ? v.trim() : undefined))
     .pipe(z.string().url().optional()),
-
-  BODY_JSON_LIMIT_MB: z.coerce.number().positive().default(2),
 });
 
 let validated = null;
