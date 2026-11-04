@@ -284,7 +284,7 @@ async function submit({ attemptId, userId, answers }) {
   try {
     const progressService = require('./progressService');
     const estimateMin = ((questions || []).length * 45) / 60;
-    await progressService.logActivity(spaceId, userId, 'quiz_submit', estimateMin);
+    await progressService.logActivity(spaceId, userId, 'quiz_submitted', estimateMin);
   } catch (_e) {}
 
   // Return graded payload

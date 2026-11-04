@@ -135,6 +135,23 @@ async function runGeneration(spaceId) {
       );
 
     if (error) console.error('[summaryService.runGeneration] write error:', error.message);
+
+    // Log activity (attributed to the space owner)
+    if (!error) {
+      try {
+        const { data: sp } = await supabase
+          .from('study_spaces')
+          .select('owner_id')
+          .eq('id', spaceId)
+          .maybeSingle();
+        if (sp?.owner_id) {
+          const progressService = require('./progressService');
+          await progressService.logActivity(spaceId, sp.owner_id, 'summary_generated', 0);
+        }
+      } catch (e) {
+        console.error('[summaryService.runGeneration] logActivity error:', e.message);
+      }
+    }
   } catch (err) {
     console.error('[summaryService.runGeneration] AI error:', err.message);
     await supabase

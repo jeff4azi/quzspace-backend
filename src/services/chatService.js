@@ -84,7 +84,7 @@ async function sendMessage(spaceId, userId, userContent) {
   // Log activity
   try {
     const progressService = require('./progressService');
-    await progressService.logActivity(spaceId, userId, 'chat_send', 1);
+    await progressService.logActivity(spaceId, userId, 'chat_message_sent', 1);
   } catch (_e) {}
 
   return {

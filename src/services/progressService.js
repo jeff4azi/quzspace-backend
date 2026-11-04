@@ -11,13 +11,15 @@ const { HTTP_STATUS, ERROR_CODES } = require('../config/constants');
 
 async function logActivity(spaceId, userId, eventType, minutesEstimate = 0) {
   try {
-    await supabase.from('activity_logs').insert({
+    const { error } = await supabase.from('activity_logs').insert({
       space_id: spaceId,
       user_id: userId,
       event_type: eventType,
       minutes_estimate: Math.max(0, Number(minutesEstimate) || 0),
       meta: {},
     });
+    // Supabase resolves with { error } instead of throwing, so surface it here.
+    if (error) console.error('[progressService.logActivity] insert error:', error.message);
   } catch (err) {
     console.error('[progressService.logActivity] error:', err.message);
   }

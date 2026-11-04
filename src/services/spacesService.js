@@ -397,6 +397,14 @@ async function create({ userId, title, subject, accentStyle, pastedText }) {
     }
   }
 
+  // Log activity
+  try {
+    const progressService = require('./progressService');
+    await progressService.logActivity(space.id, userId, 'space_created', 0);
+  } catch (e) {
+    console.error('[spacesService.create] logActivity error:', e.message);
+  }
+
   return getById({ spaceId: space.id, userId });
 }
 

@@ -194,7 +194,7 @@ async function toggleMastery({ spaceId, cardId, userId }) {
   // Log activity
   try {
     const progressService = require('./progressService');
-    await progressService.logActivity(spaceId, userId, 'flashcard_mastery', 0.5);
+    await progressService.logActivity(spaceId, userId, mastered ? 'flashcard_mastered' : 'flashcard_unmastered', 0.5);
   } catch (_e) {}
 
   return { mastered };

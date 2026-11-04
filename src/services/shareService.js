@@ -65,6 +65,15 @@ async function createShareLink({ spaceId, userId, filesVisible = true }) {
   if (error || !newCode) {
     throw new AppError({ code: ERROR_CODES.INTERNAL, message: error?.message || 'Failed to create share link', status: HTTP_STATUS.INTERNAL });
   }
+
+  // Log activity (only when a new share link is actually created)
+  try {
+    const progressService = require('./progressService');
+    await progressService.logActivity(spaceId, userId, 'space_shared', 0);
+  } catch (e) {
+    console.error('[shareService.createShareLink] logActivity error:', e.message);
+  }
+
   return newCode;
 }
 
