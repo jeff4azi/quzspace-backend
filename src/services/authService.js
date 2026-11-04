@@ -24,14 +24,15 @@ function normalizeMeResponse({ authUser, profile, preferences }) {
     authUser?.email?.split?.("@")[0] ||
     null;
   const email = authUser?.email || null;
+  const meta = authUser?.user_metadata || {};
 
   const prefs = preferences || {};
   return {
     id: authUser?.id || profile?.id,
     name,
     email,
-    avatarInitials: buildAvatarInitials(name, email),
-    avatarColor: "bg-brand",
+    avatarInitials: meta.avatar_initials || buildAvatarInitials(name, email),
+    avatarColor: meta.avatar_color || "bg-brand",
     avatarUrl: profile?.avatar_url || authUser?.user_metadata?.avatar_url || null,
     role: profile?.role || "user",
     timezone: profile?.timezone || null,
@@ -233,7 +234,7 @@ async function getMe(userId) {
     try {
       if (typeof supabase.auth.admin?.getUserById === "function") {
         const r = await supabase.auth.admin.getUserById(userId);
-        if (r && !r.error && r.user) return { data: r.user, error: null };
+        if (r && !r.error && r.data?.user) return { data: r.data.user, error: null };
       }
     } catch (_e) {}
     return { data: stubUserLookup(userId), error: null };
@@ -333,10 +334,83 @@ async function updatePreferences(userId, patch) {
   return getMe(userId);
 }
 
+async function updateProfile(userId, patch) {
+  const nextName = typeof patch.full_name === "string" ? patch.full_name.trim() : "";
+  const nextInitials = typeof patch.avatar_initials === "string" ? patch.avatar_initials.trim() : "";
+  const nextColor = typeof patch.avatar_color === "string" ? patch.avatar_color.trim() : "";
+
+  const profilePatch = {};
+  if (nextName) {
+    profilePatch.name = nextName;
+    profilePatch.display_name = nextName;
+  }
+
+  // profiles has no columns for initials/color, so they live in auth user_metadata.
+  const metaPatch = {};
+  if (nextInitials) metaPatch.avatar_initials = nextInitials.toUpperCase();
+  if (nextColor) metaPatch.avatar_color = nextColor;
+
+  if (Object.keys(profilePatch).length === 0 && Object.keys(metaPatch).length === 0) {
+    return getMe(userId);
+  }
+
+  const preferStub =
+    !process.env.AI_API_KEY ||
+    process.env.NODE_ENV === "test" ||
+    !supabase.from;
+
+  if (preferStub) return getMe(userId);
+
+  if (Object.keys(profilePatch).length > 0) {
+    let error = null;
+    try {
+      const res = await supabase
+        .from("profiles")
+        .upsert({ id: userId, ...profilePatch }, { onConflict: "id", ignoreDuplicates: false });
+      error = res && res.error;
+    } catch (raw) {
+      if (isFetchOrNetworkError(raw)) return getMe(userId);
+      error = raw;
+    }
+
+    if (error) {
+      if (isFetchOrNetworkError(error)) return getMe(userId);
+      throw new AppError({
+        code: ERROR_CODES.INTERNAL,
+        message: error.message || "Could not update profile",
+        status: HTTP_STATUS.INTERNAL,
+      });
+    }
+  }
+
+  if (Object.keys(metaPatch).length > 0 && typeof supabase.auth?.admin?.updateUserById === "function") {
+    let error = null;
+    try {
+      const res = await supabase.auth.admin.updateUserById(userId, { user_metadata: metaPatch });
+      error = res && res.error;
+    } catch (raw) {
+      if (isFetchOrNetworkError(raw)) return getMe(userId);
+      error = raw;
+    }
+
+    if (error) {
+      if (isFetchOrNetworkError(error)) return getMe(userId);
+      throw new AppError({
+        code: ERROR_CODES.INTERNAL,
+        message: error.message || "Could not update profile",
+        status: HTTP_STATUS.INTERNAL,
+      });
+    }
+  }
+
+  return getMe(userId);
+}
+
 module.exports = {
   signup,
   login,
   getMe,
+  updateProfile,
   updatePreferences,
   normalizeMeResponse,
   buildAvatarInitials,

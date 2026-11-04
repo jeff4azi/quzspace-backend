@@ -34,9 +34,15 @@ const updatePreferences = asyncHandler(async (req, res) => {
   res.json({ data: user });
 });
 
+const updateProfile = asyncHandler(async (req, res) => {
+  const user = await authService.updateProfile(req.user.id, req.body || {});
+  res.json({ data: user });
+});
+
 module.exports = {
   signup,
   login,
   me,
+  updateProfile,
   updatePreferences,
 };

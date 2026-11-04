@@ -5,6 +5,7 @@ const {
   signup,
   login,
   me,
+  updateProfile,
   updatePreferences,
 } = require("../controllers/authController");
 
@@ -30,11 +31,18 @@ const preferencesSchema = z.object({
   uiTheme: z.enum(["earth", "ocean", "sunset", "forest", "lavender"]).optional(),
 }).strict();
 
+const profileSchema = z.object({
+  full_name: z.string().trim().min(1).max(100).optional(),
+  avatar_initials: z.string().trim().min(1).max(3).optional(),
+  avatar_color: z.string().trim().min(1).max(40).optional(),
+}).strict();
+
 const router = express.Router();
 
 router.post("/signup", validateBody(signupSchema), signup);
 router.post("/login", validateBody(loginSchema), login);
 router.get("/me", me);
+router.patch("/me/profile", validateBody(profileSchema), updateProfile);
 router.patch("/preferences", validateBody(preferencesSchema), updatePreferences);
 
 module.exports = router;
