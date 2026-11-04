@@ -6,6 +6,7 @@
 const supabase = require('../lib/supabaseClient');
 const { AppError } = require('../lib/errors');
 const { HTTP_STATUS, ERROR_CODES } = require('../config/constants');
+const { assertSpaceRole } = require('../lib/access');
 const aiService = require('./aiService');
 const contextBuilder = require('./contextBuilder');
 
@@ -162,12 +163,29 @@ async function list(spaceId, userId) {
 // ---------------------------------------------------------------------------
 
 async function toggleMastery({ spaceId, cardId, userId }) {
+  // Direct /flashcards/:cardId/mastery route omits the space id — resolve it.
+  let resolvedSpaceId = spaceId;
+  if (!resolvedSpaceId) {
+    const { data: cardRow } = await supabase
+      .from('flashcards')
+      .select('space_id')
+      .eq('id', cardId)
+      .maybeSingle();
+    if (!cardRow) {
+      throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Flashcard not found', status: HTTP_STATUS.NOT_FOUND });
+    }
+    resolvedSpaceId = cardRow.space_id;
+  }
+
+  // Study writes require membership (viewer or above).
+  await assertSpaceRole({ spaceId: resolvedSpaceId, userId, min: 'viewer' });
+
   // Verify card belongs to space
   const { data: card } = await supabase
     .from('flashcards')
     .select('id')
     .eq('id', cardId)
-    .eq('space_id', spaceId)
+    .eq('space_id', resolvedSpaceId)
     .maybeSingle();
 
   if (!card) {
@@ -194,7 +212,7 @@ async function toggleMastery({ spaceId, cardId, userId }) {
   // Log activity
   try {
     const progressService = require('./progressService');
-    await progressService.logActivity(spaceId, userId, mastered ? 'flashcard_mastered' : 'flashcard_unmastered', 0.5);
+    await progressService.logActivity(resolvedSpaceId, userId, mastered ? 'flashcard_mastered' : 'flashcard_unmastered', 0.5);
   } catch (_e) {}
 
   return { mastered };

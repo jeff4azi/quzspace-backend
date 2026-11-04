@@ -80,6 +80,7 @@ const getLeaderboard = asyncHandler(async (req, res) => {
   const rows = await quizService.leaderboard({
     spaceId: req.params.id,
     quizId: req.params.quizId,
+    userId: req.user.id,
     limit: Number(req.query.limit) || 10,
   });
   res.json({ data: rows });

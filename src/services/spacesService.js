@@ -92,7 +92,7 @@ async function hydrateAggregates({ baseRows, userId }) {
     membersMap[sid] = [];
   }
   if (safeIds.length === 0) {
-    return { fileCountMap, progressMap, membersMap };
+    return { fileCountMap, progressMap, membersMap, roleMap: {} };
   }
 
   const updatedAtById = {};
@@ -275,7 +275,19 @@ async function hydrateAggregates({ baseRows, userId }) {
     }));
     collabsSeen[sid] += 1;
   }
-  return { fileCountMap, progressMap, membersMap };
+
+  // Caller's own role per space — drives owner vs member affordances in the UI.
+  const roleMap = {};
+  for (const sid of safeIds) {
+    roleMap[sid] = ownerIdById[sid] === userId ? 'owner' : null;
+  }
+  for (const row of collabRows) {
+    const sid = row.space_id;
+    if (!sid || roleMap[sid] || row.user_id !== userId) continue;
+    roleMap[sid] = row.role === 'collaborator' ? 'collaborator' : 'viewer';
+  }
+
+  return { fileCountMap, progressMap, membersMap, roleMap };
 }
 
 async function listForUser(userId) {
@@ -301,9 +313,9 @@ async function listForUser(userId) {
     });
   }
 
-  const { fileCountMap, progressMap, membersMap } = rows.length
+  const { fileCountMap, progressMap, membersMap, roleMap } = rows.length
     ? await hydrateAggregates({ baseRows: rows, userId })
-    : { fileCountMap: {}, progressMap: {}, membersMap: {} };
+    : { fileCountMap: {}, progressMap: {}, membersMap: {}, roleMap: {} };
 
   return rows.map(space => {
     const agg = progressMap[space.id] || {
@@ -327,6 +339,7 @@ async function listForUser(userId) {
       accent_style: space.accent_style,
       description: space.description || null,
       owner_id: space.owner_id,
+      role: roleMap[space.id] || null,
       files_visible: typeof space.files_visible === 'boolean' ? space.files_visible : true,
       file_count: fileCountMap[space.id] || 0,
       progress_percent: agg.progress_percent || 0,

@@ -1,5 +1,5 @@
 // services/shareService.js
-// Base62 8-char share codes + collaborators + community leaderboard.
+// Base62 8-char share codes + membership (viewers/collaborators) + community leaderboard.
 
 const supabase = require('../lib/supabaseClient');
 const { AppError } = require('../lib/errors');
@@ -17,7 +17,7 @@ function generateCode() {
 }
 
 // ---------------------------------------------------------------------------
-// createShareLink
+// createShareLink / deleteShareLink
 // ---------------------------------------------------------------------------
 
 async function createShareLink({ spaceId, userId, filesVisible = true }) {
@@ -77,6 +77,15 @@ async function createShareLink({ spaceId, userId, filesVisible = true }) {
   return newCode;
 }
 
+async function deleteShareLink({ spaceId, userId }) {
+  const { data: space } = await supabase.from('study_spaces').select('owner_id').eq('id', spaceId).maybeSingle();
+  if (!space) throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Space not found', status: HTTP_STATUS.NOT_FOUND });
+  if (space.owner_id !== userId) throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Only the owner can revoke the share link', status: HTTP_STATUS.FORBIDDEN });
+
+  const { error } = await supabase.from('share_codes').delete().eq('space_id', spaceId);
+  if (error) throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
+}
+
 // ---------------------------------------------------------------------------
 // resolveCode — public, no auth required
 // ---------------------------------------------------------------------------
@@ -116,6 +125,20 @@ async function resolveCode(code) {
     .eq('status', 'ready')
     .maybeSingle();
 
+  // Read-only preview material for visitors without an account.
+  // Quizzes are exposed as metadata only — never with questions or answers.
+  const { data: quizzes } = await supabase
+    .from('quizzes')
+    .select('id, title, difficulty, question_count, selected_topics, created_at')
+    .eq('space_id', shareRow.space_id)
+    .order('created_at', { ascending: false });
+
+  const { data: flashcards } = await supabase
+    .from('flashcards')
+    .select('id, front, back, topic, difficulty, position')
+    .eq('space_id', shareRow.space_id)
+    .order('position', { ascending: true });
+
   // Community panels (leaderboard + active viewers) for the public page.
   let community = { leaderboard: [] };
   try {
@@ -129,6 +152,8 @@ async function resolveCode(code) {
     filesVisible: shareRow.files_visible,
     files: shareRow.files_visible ? (files || []) : [],
     summary: summary?.data || null,
+    quizzes: quizzes || [],
+    flashcards: flashcards || [],
     share: {
       share_code: code,
       files_visible: shareRow.files_visible,
@@ -150,50 +175,106 @@ async function resolveCode(code) {
 }
 
 // ---------------------------------------------------------------------------
-// addCollaborator
+// Membership (self-service) — replaces the old email-invite flow
 // ---------------------------------------------------------------------------
 
-async function addCollaborator({ spaceId, userId, email, role = 'collaborator' }) {
-  // Verify ownership
+// A logged-in user saves a shared space to their dashboard → becomes a `viewer`.
+// Idempotent: re-joining never demotes an existing collaborator.
+async function joinSpace({ spaceId, userId }) {
   const { data: space } = await supabase
     .from('study_spaces')
     .select('owner_id')
     .eq('id', spaceId)
     .maybeSingle();
   if (!space) throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Space not found', status: HTTP_STATUS.NOT_FOUND });
-  if (space.owner_id !== userId) throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Only the owner can add collaborators', status: HTTP_STATUS.FORBIDDEN });
 
-  // Resolve email to user id via admin API
-  let targetUserId = null;
-  try {
-    const { data: users } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const found = (users?.users || []).find(u => u.email === email);
-    if (found) targetUserId = found.id;
-  } catch (err) {
-    throw new AppError({ code: ERROR_CODES.INTERNAL, message: 'Could not look up user: ' + err.message, status: HTTP_STATUS.INTERNAL });
+  // The owner already has full access — nothing to join.
+  if (space.owner_id === userId) return { role: 'owner', joined: false };
+
+  const { data: existing } = await supabase
+    .from('space_collaborators')
+    .select('role')
+    .eq('space_id', spaceId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (existing) return { role: existing.role || 'viewer', joined: false };
+
+  // Only spaces with an active share link accept new members.
+  const { data: shareRow } = await supabase
+    .from('share_codes')
+    .select('id')
+    .eq('space_id', spaceId)
+    .maybeSingle();
+  if (!shareRow) {
+    throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'This space is not accepting new members', status: HTTP_STATUS.FORBIDDEN });
   }
 
-  if (!targetUserId) {
-    throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: `No user found with email ${email}`, status: HTTP_STATUS.NOT_FOUND });
-  }
-
-  // Upsert collaborator row
   const { error } = await supabase
     .from('space_collaborators')
-    .upsert({ space_id: spaceId, user_id: targetUserId, role }, { onConflict: 'space_id,user_id' });
+    .insert({ space_id: spaceId, user_id: userId, role: 'viewer' });
+  if (error) {
+    // Concurrent join → unique violation; treat as already joined.
+    const { data: retry } = await supabase
+      .from('space_collaborators')
+      .select('role')
+      .eq('space_id', spaceId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (retry) return { role: retry.role || 'viewer', joined: false };
+    throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
+  }
 
-  if (error) throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
-
-  return { userId: targetUserId, email, role };
+  return { role: 'viewer', joined: true };
 }
 
-// ---------------------------------------------------------------------------
-// removeCollaborator
-// ---------------------------------------------------------------------------
+// A viewer/collaborator removes the space from their own dashboard.
+async function leaveSpace({ spaceId, userId }) {
+  const { data: space } = await supabase.from('study_spaces').select('owner_id').eq('id', spaceId).maybeSingle();
+  if (!space) throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Space not found', status: HTTP_STATUS.NOT_FOUND });
+  if (space.owner_id === userId) {
+    throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Owners cannot leave their own space', status: HTTP_STATUS.FORBIDDEN });
+  }
+
+  const { error } = await supabase
+    .from('space_collaborators')
+    .delete()
+    .eq('space_id', spaceId)
+    .eq('user_id', userId);
+  if (error) throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
+}
+
+// Owner promotes a viewer → collaborator (or demotes back).
+async function updateCollaboratorRole({ spaceId, userId, targetUserId, role }) {
+  if (role !== 'viewer' && role !== 'collaborator') {
+    throw new AppError({ code: ERROR_CODES.VALIDATION_ERROR, message: "role must be 'viewer' or 'collaborator'", status: HTTP_STATUS.BAD_REQUEST });
+  }
+
+  const { data: space } = await supabase.from('study_spaces').select('owner_id').eq('id', spaceId).maybeSingle();
+  if (!space) throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Space not found', status: HTTP_STATUS.NOT_FOUND });
+  if (space.owner_id !== userId) throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Only the owner can change member roles', status: HTTP_STATUS.FORBIDDEN });
+  if (targetUserId === space.owner_id) throw new AppError({ code: ERROR_CODES.VALIDATION_ERROR, message: 'The owner role cannot be changed', status: HTTP_STATUS.BAD_REQUEST });
+
+  const { data: existing } = await supabase
+    .from('space_collaborators')
+    .select('user_id')
+    .eq('space_id', spaceId)
+    .eq('user_id', targetUserId)
+    .maybeSingle();
+  if (!existing) throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Member not found in this space', status: HTTP_STATUS.NOT_FOUND });
+
+  const { error } = await supabase
+    .from('space_collaborators')
+    .update({ role })
+    .eq('space_id', spaceId)
+    .eq('user_id', targetUserId);
+  if (error) throw new AppError({ code: ERROR_CODES.INTERNAL, message: error.message, status: HTTP_STATUS.INTERNAL });
+
+  return { userId: targetUserId, role };
+}
 
 async function removeCollaborator({ spaceId, userId, targetUserId }) {
   const { data: space } = await supabase.from('study_spaces').select('owner_id').eq('id', spaceId).maybeSingle();
-  if (!space || space.owner_id !== userId) throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Only the owner can remove collaborators', status: HTTP_STATUS.FORBIDDEN });
+  if (!space || space.owner_id !== userId) throw new AppError({ code: ERROR_CODES.FORBIDDEN, message: 'Only the owner can remove members', status: HTTP_STATUS.FORBIDDEN });
 
   await supabase.from('space_collaborators').delete().eq('space_id', spaceId).eq('user_id', targetUserId);
 }
@@ -260,11 +341,15 @@ async function fetchActiveViewers(spaceId, windowMinutes = 15) {
   }
 }
 
-// Builds the collaborator / visitor / leaderboard payload shared by
-// getCommunity() (authed) and resolveCode() (public, userId = null).
+// Builds the { owner, contributors, viewers, leaderboard, my_role } payload shared
+// by getCommunity() (authed) and resolveCode() (public, userId = null).
 async function buildCommunity(spaceId, userId = null) {
-  const [spaceRes, collabRes, attemptsRes, masteryRes, activityRes] = await Promise.all([
-    supabase.from('study_spaces').select('owner_id').eq('id', spaceId).maybeSingle(),
+  const [spaceRes, membersRes, attemptsRes, masteryRes] = await Promise.all([
+    supabase
+      .from('study_spaces')
+      .select('owner_id, created_at, owner_profile:profiles!study_spaces_owner_id_fkey(id, name, display_name, avatar_url)')
+      .eq('id', spaceId)
+      .maybeSingle(),
     supabase
       .from('space_collaborators')
       .select('user_id, role, joined_at, profile:profiles(id, name, display_name, avatar_url)')
@@ -278,27 +363,20 @@ async function buildCommunity(spaceId, userId = null) {
       .from('flashcard_mastery')
       .select('user_id, flashcard:flashcards!inner(space_id)')
       .eq('flashcard.space_id', spaceId),
-    supabase
-      .from('activity_logs')
-      .select('user_id, created_at, profile:profiles(id, name, display_name, avatar_url)')
-      .eq('space_id', spaceId)
-      .order('created_at', { ascending: false }),
   ]);
 
   const ownerId = spaceRes?.data?.owner_id || null;
-  const collaborators = collabRes?.data || [];
+  const members = membersRes?.data || [];
   const attempts = attemptsRes?.data || [];
   const mastery = masteryRes?.data || [];
-  const activity = activityRes?.data || [];
 
-  const collaboratorIds = new Set(collaborators.map((c) => c.user_id));
+  const memberByUser = new Map();
+  for (const m of members) memberByUser.set(m.user_id, m);
 
-  // Resolve display profiles from collaborators first, then activity rows.
   const profileByUser = new Map();
-  for (const c of collaborators) if (c.profile) profileByUser.set(c.user_id, c.profile);
-  for (const a of activity) {
-    if (a.user_id && a.profile && !profileByUser.has(a.user_id)) profileByUser.set(a.user_id, a.profile);
-  }
+  const ownerProfile = spaceRes?.data?.owner_profile;
+  if (ownerId && ownerProfile) profileByUser.set(ownerId, ownerProfile);
+  for (const m of members) if (m.profile) profileByUser.set(m.user_id, m.profile);
 
   // Per-user aggregates (submitted attempts only — filtered in the query above).
   const attemptsByUser = new Map();
@@ -318,16 +396,12 @@ async function buildCommunity(spaceId, userId = null) {
     masteryByUser.set(m.user_id, (masteryByUser.get(m.user_id) || 0) + 1);
   }
 
-  // activity is ordered desc → the last write per user is their first visit.
-  const firstVisitByUser = new Map();
-  for (const row of activity) {
-    if (row.user_id) firstVisitByUser.set(row.user_id, row.created_at);
-  }
-
   const roleFor = (id) => {
+    if (!id) return null;
     if (id === ownerId) return 'owner';
-    const c = collaborators.find((x) => x.user_id === id);
-    return c ? c.role || 'collaborator' : 'visitor';
+    const m = memberByUser.get(id);
+    if (!m) return null;
+    return m.role === 'collaborator' ? 'collaborator' : 'viewer';
   };
 
   const entryFor = (id, extra = {}) => {
@@ -349,29 +423,31 @@ async function buildCommunity(spaceId, userId = null) {
     };
   };
 
-  const collaboratorsOut = collaborators.map((c) =>
-    entryFor(c.user_id, { role: c.role || 'collaborator', joined_at: c.joined_at || null })
-  );
+  const ownerEntry = ownerId
+    ? entryFor(ownerId, { joined_at: spaceRes?.data?.created_at || null })
+    : null;
 
-  // Visitors = anyone with activity/attempts here who is not the owner or a collaborator.
-  const visitorIds = new Set();
-  for (const id of [...activity.map((r) => r.user_id), ...attempts.map((r) => r.user_id)]) {
-    if (!id || id === ownerId || collaboratorIds.has(id)) continue;
-    visitorIds.add(id);
+  const contributors = [];
+  const viewers = [];
+  for (const m of members) {
+    const entry = entryFor(m.user_id, { joined_at: m.joined_at || null });
+    if (entry.role === 'collaborator') contributors.push(entry);
+    else viewers.push(entry);
   }
+  contributors.sort((a, b) => b.best_score - a.best_score);
+  viewers.sort((a, b) => b.best_score - a.best_score);
 
-  const visitorsOut = [...visitorIds].map((id) =>
-    entryFor(id, { first_visited: firstVisitByUser.get(id) || null })
-  );
-
-  // Leaderboard: best score per member across the space.
-  const memberIds = new Set([...collaboratorIds, ...visitorIds]);
-  if (ownerId) memberIds.add(ownerId);
-  const leaderboard = [...memberIds]
-    .map((id) => entryFor(id))
+  const leaderboard = [ownerEntry, ...contributors, ...viewers]
+    .filter(Boolean)
     .sort((a, b) => b.best_score - a.best_score);
 
-  return { collaborators: collaboratorsOut, visitors: visitorsOut, leaderboard };
+  return {
+    owner: ownerEntry,
+    contributors,
+    viewers,
+    leaderboard,
+    my_role: userId ? roleFor(userId) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -388,10 +464,11 @@ async function getCommunity(spaceId, userId = null, origin = null) {
     .maybeSingle();
 
   return {
-    collaborators: community.collaborators,
-    visitors: community.visitors,
-    link_takers: community.visitors,
+    owner: community.owner,
+    contributors: community.contributors,
+    viewers: community.viewers,
     leaderboard: community.leaderboard,
+    my_role: community.my_role,
     share: {
       enabled: !!shareRow,
       share_code: shareRow?.code || null,
@@ -402,4 +479,14 @@ async function getCommunity(spaceId, userId = null, origin = null) {
   };
 }
 
-module.exports = { createShareLink, resolveCode, addCollaborator, removeCollaborator, getCommunity };
+module.exports = {
+  createShareLink,
+  deleteShareLink,
+  resolveCode,
+  joinSpace,
+  leaveSpace,
+  updateCollaboratorRole,
+  removeCollaborator,
+  getCommunity,
+  buildCommunity,
+};

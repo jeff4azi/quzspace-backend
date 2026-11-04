@@ -5,6 +5,7 @@
 const supabase = require('../lib/supabaseClient');
 const { AppError } = require('../lib/errors');
 const { HTTP_STATUS, ERROR_CODES } = require('../config/constants');
+const { assertSpaceRole } = require('../lib/access');
 const aiService = require('./aiService');
 const contextBuilder = require('./contextBuilder');
 
@@ -162,6 +163,11 @@ async function getById({ spaceId, quizId, userId }) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
   }
 
+  // Direct /quizzes/:quizId route omits the space id — re-check membership here.
+  if (!spaceId) {
+    await assertSpaceRole({ spaceId: quiz.space_id, userId, min: 'viewer' });
+  }
+
   const { data: questions, error: qErr } = await supabase
     .from('quiz_questions')
     .select('*')
@@ -192,6 +198,11 @@ async function take({ spaceId, quizId, userId }) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
   }
   const resolvedSpaceId = quiz.space_id;
+
+  // Direct /quizzes/:quizId routes omit the space id — re-check membership here.
+  if (!spaceId) {
+    await assertSpaceRole({ spaceId: resolvedSpaceId, userId, min: 'viewer' });
+  }
 
   // Attempt numbering is unique per (quiz, user).
   const { count: priorAttempts } = await supabase
@@ -356,6 +367,11 @@ async function submit({ attemptId, userId, answers }) {
 // ---------------------------------------------------------------------------
 
 async function listHistory({ spaceId, quizId, userId }) {
+  // Direct /quizzes/:quizId/history route omits the space id — re-check membership.
+  if (!spaceId && quizId) {
+    await spaceIdForQuiz(quizId, userId);
+  }
+
   let query = supabase
     .from('quiz_attempts')
     .select(`
@@ -385,7 +401,12 @@ async function listHistory({ spaceId, quizId, userId }) {
 // leaderboard
 // ---------------------------------------------------------------------------
 
-async function leaderboard({ spaceId, quizId, limit = 10 }) {
+async function leaderboard({ spaceId, quizId, userId, limit = 10 }) {
+  // Direct /quizzes/:quizId/leaderboard route omits the space id — re-check membership.
+  if (!spaceId) {
+    await spaceIdForQuiz(quizId, userId);
+  }
+
   const { data, error } = await supabase
     .from('quiz_attempts')
     .select(`
@@ -432,6 +453,21 @@ async function deleteQuiz({ spaceId, quizId, userId }) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Resolve a quiz's space id and assert the caller holds at least `viewer`.
+// Used by the direct /quizzes/:quizId/* routes, which omit the space prefix.
+async function spaceIdForQuiz(quizId, userId) {
+  const { data: quiz } = await supabase
+    .from('quizzes')
+    .select('space_id')
+    .eq('id', quizId)
+    .maybeSingle();
+  if (!quiz) {
+    throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
+  }
+  await assertSpaceRole({ spaceId: quiz.space_id, userId, min: 'viewer' });
+  return quiz.space_id;
+}
 
 function normalizeQuiz(quiz) {
   return {
