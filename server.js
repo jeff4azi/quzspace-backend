@@ -7,7 +7,7 @@ const routes = require("./src/routes");
 const authMiddleware = require("./src/middleware/auth");
 const idempotencyMiddleware = require("./src/middleware/idempotency");
 const { errorHandler, AppError } = require("./src/lib/errors");
-const { HTTP_STATUS, ERROR_CODES } = require("./src/config/constants");
+const { HTTP_STATUS, ERROR_CODES, CORS } = require("./src/config/constants");
 
 const app = express();
 const PORT = config.PORT;
@@ -18,8 +18,8 @@ app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (config.CORS_ORIGINS.includes("*")) return callback(null, true);
-      if (config.CORS_ORIGINS.includes(origin)) return callback(null, true);
+      if (CORS.ORIGINS.includes("*")) return callback(null, true);
+      if (CORS.ORIGINS.includes(origin)) return callback(null, true);
       if (config.NODE_ENV === "development") return callback(null, true);
       return callback(
         new AppError({
@@ -97,7 +97,7 @@ if (require.main === module) {
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(
-      `\n  QuzSpace API · ${config.NODE_ENV}\n  Port ${PORT} · ${API_PREFIX}\n  CORS origins: ${config.CORS_ORIGINS.join(", ") || "(any)"}\n`,
+      `\n  QuzSpace API · ${config.NODE_ENV}\n  Port ${PORT} · ${API_PREFIX}\n  CORS origins: ${CORS.ORIGINS.join(", ") || "(any)"}\n`,
     );
   });
 }

@@ -80,7 +80,7 @@ function isFetchOrNetworkError(err) {
 
 async function signup({ email, password, name, displayName }) {
   const preferStub =
-    process.env.AI_PROVIDER === "stub" ||
+    !process.env.AI_API_KEY ||
     process.env.NODE_ENV === "test" ||
     !supabase.auth ||
     typeof supabase.auth.admin?.createUser !== "function";
@@ -160,7 +160,7 @@ function stubLoginResult({ email }) {
 
 async function login({ email, password }) {
   const preferStub =
-    process.env.AI_PROVIDER === "stub" ||
+    !process.env.AI_API_KEY ||
     process.env.NODE_ENV === "test" ||
     typeof supabase.auth?.signInWithPassword !== "function";
 
@@ -298,7 +298,7 @@ async function updatePreferences(userId, patch) {
   }
 
   const preferStub =
-    process.env.AI_PROVIDER === "stub" ||
+    !process.env.AI_API_KEY ||
     process.env.NODE_ENV === "test" ||
     !supabase.from;
 

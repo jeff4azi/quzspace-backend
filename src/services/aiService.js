@@ -1,6 +1,7 @@
 // services/aiService.js
 // Provider abstraction: Stub / OpenAI / Anthropic / Gemini using direct HTTPS fetch — NO SDK deps.
-// Selection: AI_PROVIDER env var. AI_API_KEY, AI_MODEL, AI_BASE_URL for overrides.
+// Provider, model and base URL are fixed in config/constants.js — only AI_API_KEY comes from env.
+// When AI_API_KEY is missing the service falls back to the deterministic stub provider.
 
 const config = require('../config');
 const { AI } = require('../config/constants');
@@ -10,17 +11,22 @@ const { AI } = require('../config/constants');
 // ---------------------------------------------------------------------------
 
 function resolveProvider() {
-  return (config.AI_PROVIDER || AI.DEFAULT_PROVIDER).toLowerCase();
+  // Only the API key is configurable; without it we cannot reach a real provider.
+  if (!config.AI_API_KEY) return AI.PROVIDERS.STUB;
+  return (AI.PROVIDER || AI.PROVIDERS.STUB).toLowerCase();
 }
 
 function resolveModel(provider) {
-  if (config.AI_MODEL) return config.AI_MODEL;
   switch (provider) {
-    case AI.PROVIDERS.OPENAI:     return 'gpt-4o-mini';
+    case AI.PROVIDERS.OPENAI:     return AI.MODEL || 'gpt-4o-mini';
     case AI.PROVIDERS.ANTHROPIC:  return 'claude-3-haiku-20240307';
     case AI.PROVIDERS.GEMINI:     return 'gemini-1.5-flash';
     default:                      return 'stub';
   }
+}
+
+function baseUrlFor(provider) {
+  return (AI.BASE_URLS && AI.BASE_URLS[provider]) || AI.BASE_URL;
 }
 
 async function fetchJson(url, options) {
@@ -99,7 +105,7 @@ function stubComplete({ systemPrompt, userPrompt, jsonMode }) {
     });
   }
   // Chat
-  return `I've reviewed your study material. Based on the context provided, here is my response to your question:\n\n${userPrompt.slice(0, 100)}...\n\nThis is a stub response. Configure AI_PROVIDER and AI_API_KEY in your .env file to enable real AI responses.`;
+  return `I've reviewed your study material. Based on the context provided, here is my response to your question:\n\n${userPrompt.slice(0, 100)}...\n\nThis is a stub response. Set AI_API_KEY in your .env file to enable real AI responses.`;
 }
 
 function stubEmbed(texts) {
@@ -112,7 +118,7 @@ function stubEmbed(texts) {
 // ---------------------------------------------------------------------------
 
 async function openaiComplete({ systemPrompt, userPrompt, jsonMode, model }) {
-  const url = (config.AI_BASE_URL || 'https://api.openai.com') + '/v1/chat/completions';
+  const url = baseUrlFor(AI.PROVIDERS.OPENAI) + '/v1/chat/completions';
   const body = {
     model,
     messages: [
@@ -133,8 +139,8 @@ async function openaiComplete({ systemPrompt, userPrompt, jsonMode, model }) {
   return result.choices?.[0]?.message?.content || '';
 }
 
-async function openaiEmbed(texts, model = 'text-embedding-3-small') {
-  const url = (config.AI_BASE_URL || 'https://api.openai.com') + '/v1/embeddings';
+async function openaiEmbed(texts, model = AI.EMBED_MODEL || 'text-embedding-3-small') {
+  const url = baseUrlFor(AI.PROVIDERS.OPENAI) + '/v1/embeddings';
   const result = await fetchJson(url, {
     method: 'POST',
     headers: {
@@ -151,7 +157,7 @@ async function openaiEmbed(texts, model = 'text-embedding-3-small') {
 // ---------------------------------------------------------------------------
 
 async function anthropicComplete({ systemPrompt, userPrompt, jsonMode, model }) {
-  const url = (config.AI_BASE_URL || 'https://api.anthropic.com') + '/v1/messages';
+  const url = baseUrlFor(AI.PROVIDERS.ANTHROPIC) + '/v1/messages';
   const prompt = jsonMode
     ? userPrompt + '\n\nRespond with valid JSON only, no markdown code fences.'
     : userPrompt;
@@ -184,7 +190,7 @@ async function anthropicEmbed(texts) {
 // ---------------------------------------------------------------------------
 
 async function geminiComplete({ systemPrompt, userPrompt, jsonMode, model }) {
-  const baseUrl = config.AI_BASE_URL || 'https://generativelanguage.googleapis.com';
+  const baseUrl = baseUrlFor(AI.PROVIDERS.GEMINI);
   const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${config.AI_API_KEY}`;
   const prompt = jsonMode
     ? userPrompt + '\n\nRespond with valid JSON only, no markdown code fences.'
@@ -202,7 +208,7 @@ async function geminiComplete({ systemPrompt, userPrompt, jsonMode, model }) {
 }
 
 async function geminiEmbed(texts, model = 'text-embedding-004') {
-  const baseUrl = config.AI_BASE_URL || 'https://generativelanguage.googleapis.com';
+  const baseUrl = baseUrlFor(AI.PROVIDERS.GEMINI);
   const embeddings = [];
   for (const text of texts) {
     const url = `${baseUrl}/v1beta/models/${model}:embedContent?key=${config.AI_API_KEY}`;

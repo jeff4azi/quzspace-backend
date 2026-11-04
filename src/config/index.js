@@ -2,7 +2,6 @@ if (process.env.SKIP_DOTENV !== "1") {
   require("dotenv").config();
 }
 const { z } = require("zod");
-const { AI } = require("./constants");
 
 const envSchema = z.object({
   NODE_ENV: z
@@ -15,33 +14,8 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z
     .string()
     .min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
-  SUPABASE_JWT_SECRET: z.string().optional(),
 
-  CORS_ORIGINS: z
-    .string()
-    .default("http://localhost:5173,http://localhost:3000,https://quzspace.vercel.app")
-    .transform((s) =>
-      s
-        .split(",")
-        .map((o) => o.trim())
-        .filter(Boolean),
-    ),
-
-  AI_PROVIDER: z
-    .enum([
-      AI.PROVIDERS.STUB,
-      AI.PROVIDERS.OPENAI,
-      AI.PROVIDERS.ANTHROPIC,
-      AI.PROVIDERS.GEMINI,
-    ])
-    .default(AI.DEFAULT_PROVIDER),
   AI_API_KEY: z.string().optional(),
-  AI_MODEL: z.string().optional(),
-  AI_BASE_URL: z
-    .string()
-    .optional()
-    .transform((v) => (v && v.trim() ? v.trim() : undefined))
-    .pipe(z.string().url().optional()),
 
   SUPABASE_ANON_KEY: z.string().optional(),
   VITE_SUPABASE_URL: z

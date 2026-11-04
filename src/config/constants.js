@@ -39,7 +39,26 @@ exports.AI = {
     ANTHROPIC: "anthropic",
     GEMINI: "gemini",
   },
-  DEFAULT_PROVIDER: "stub",
+  // Provider config is fixed in code — only AI_API_KEY is provided via env.
+  // When AI_API_KEY is absent the service silently falls back to the stub provider.
+  PROVIDER: "openai",
+  MODEL: "gpt-4o-mini",
+  EMBED_MODEL: "text-embedding-3-small",
+  BASE_URL: "https://api.openai.com",
+  BASE_URLS: {
+    openai: "https://api.openai.com",
+    anthropic: "https://api.anthropic.com",
+    gemini: "https://generativelanguage.googleapis.com",
+  },
+};
+
+exports.CORS = {
+  // Hardcoded allow-list. "*" allows any origin (dev only).
+  ORIGINS: [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://quzspace.vercel.app",
+  ],
 };
 
 exports.FILES = {
