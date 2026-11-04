@@ -153,12 +153,10 @@ async function listForSpace(spaceId) {
 // ---------------------------------------------------------------------------
 
 async function getById({ spaceId, quizId, userId }) {
-  const { data: quiz, error: quizErr } = await supabase
-    .from('quizzes')
-    .select('*')
-    .eq('id', quizId)
-    .eq('space_id', spaceId)
-    .maybeSingle();
+  // spaceId is optional — the direct /quizzes/:quizId route omits it.
+  let query = supabase.from('quizzes').select('*').eq('id', quizId);
+  if (spaceId) query = query.eq('space_id', spaceId);
+  const { data: quiz, error: quizErr } = await query.maybeSingle();
 
   if (quizErr || !quiz) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
@@ -185,17 +183,15 @@ async function getById({ spaceId, quizId, userId }) {
 // ---------------------------------------------------------------------------
 
 async function take({ spaceId, quizId, userId }) {
-  // Verify quiz exists in space
-  const { data: quiz } = await supabase
-    .from('quizzes')
-    .select('id, question_count')
-    .eq('id', quizId)
-    .eq('space_id', spaceId)
-    .maybeSingle();
+  // spaceId is optional — resolve it from the quiz when the direct route omits it.
+  let query = supabase.from('quizzes').select('id, question_count, space_id').eq('id', quizId);
+  if (spaceId) query = query.eq('space_id', spaceId);
+  const { data: quiz } = await query.maybeSingle();
 
   if (!quiz) {
     throw new AppError({ code: ERROR_CODES.NOT_FOUND, message: 'Quiz not found', status: HTTP_STATUS.NOT_FOUND });
   }
+  const resolvedSpaceId = quiz.space_id;
 
   // Attempt numbering is unique per (quiz, user).
   const { count: priorAttempts } = await supabase
@@ -208,7 +204,7 @@ async function take({ spaceId, quizId, userId }) {
     .from('quiz_attempts')
     .insert({
       quiz_id: quizId,
-      space_id: spaceId,
+      space_id: resolvedSpaceId,
       user_id: userId,
       attempt_number: (priorAttempts || 0) + 1,
       total_questions: quiz.question_count || 0,
@@ -234,7 +230,7 @@ async function take({ spaceId, quizId, userId }) {
     attemptId: attempt.id,
     attemptNumber: attempt.attempt_number,
     quizId,
-    spaceId,
+    spaceId: resolvedSpaceId,
     startedAt: attempt.started_at,
     questions: (questions || []).map((q) => ({
       id: q.id,

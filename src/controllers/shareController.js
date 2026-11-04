@@ -39,7 +39,7 @@ const removeCollaborator = asyncHandler(async (req, res) => {
 });
 
 const getCommunity = asyncHandler(async (req, res) => {
-  const data = await shareService.getCommunity(req.params.id);
+  const data = await shareService.getCommunity(req.params.id, req.user?.id, req.headers.origin);
   res.json({ data });
 });
 
