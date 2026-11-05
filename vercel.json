@@ -3,7 +3,6 @@
   "installCommand": "npm install",
   "buildCommand": "",
   "outputDirectory": ".",
-  "public": false,
   "functions": {
     "api/index.js": {
       "maxDuration": 25,
